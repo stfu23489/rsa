@@ -1,0 +1,566 @@
+// Tab functionality
+function switchTab(tabId, clickedButton) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active', 'border-blue-600');
+        button.classList.add('border-transparent');
+    });
+
+    // Show selected tab content
+    document.getElementById(tabId).classList.add('active');
+
+    // Add active class to clicked button
+    clickedButton.classList.add('active', 'border-blue-600');
+    clickedButton.classList.remove('border-transparent');
+}
+
+// Toggle password visibility
+function togglePasswordVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    const button = input.nextElementSibling;
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        button.innerHTML = '<i class="fas fa-eye-slash"></i>';
+    } else {
+        input.type = 'password';
+        button.innerHTML = '<i class="fas fa-eye"></i>';
+    }
+}
+
+// UTILS
+function ab2b64(buf) {
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for(let b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary);
+}
+
+function b642ab(str) {
+    const binary = atob(str);
+    const len = binary.length;
+    const buf = new Uint8Array(len);
+    for(let i=0; i<len; i++) buf[i] = binary.charCodeAt(i);
+    return buf.buffer;
+}
+
+function concatArrays(...arrays) {
+    let totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0);
+    let result = new Uint8Array(totalLength);
+    let offset = 0;
+    for(let arr of arrays){
+        result.set(arr, offset);
+        offset += arr.length;
+    }
+    return result;
+}
+
+function stripPemHeaderFooter(pem) {
+    return pem.replace(/-----BEGIN [^-]+-----/, '')
+            .replace(/-----END [^-]+-----/, '')
+            .replace(/\s+/g, '');
+}
+
+function pemToBase64(pem) {
+    return stripPemHeaderFooter(pem);
+}
+
+function toPem(base64, label) {
+    let formatted = base64.match(/.{1,64}/g).join('\n');
+    return `-----BEGIN ${label}-----\n${formatted}\n-----END ${label}-----`;
+}
+
+async function importPublicKeyFromPem(pem) {
+    const b64 = pemToBase64(pem);
+    const spki = b642ab(b64);
+    return crypto.subtle.importKey('spki', spki, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['encrypt']);
+}
+
+async function importPrivateKeyFromPem(pem) {
+    const b64 = pemToBase64(pem);
+    const pkcs8 = b642ab(b64);
+    return crypto.subtle.importKey('pkcs8', pkcs8, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['decrypt']);
+}
+
+async function importSignPublicKeyFromPem(pem) {
+    const b64 = pemToBase64(pem);
+    const spki = b642ab(b64);
+    return crypto.subtle.importKey('spki', spki, {name:'RSASSA-PKCS1-v1_5', hash:'SHA-256'}, true, ['verify']);
+}
+
+async function importSignPrivateKeyFromPem(pem) {
+    const b64 = pemToBase64(pem);
+    const pkcs8 = b642ab(b64);
+    return crypto.subtle.importKey('pkcs8', pkcs8, {name:'RSASSA-PKCS1-v1_5', hash:'SHA-256'}, true, ['sign']);
+}
+
+async function exportPublicKeyToPem(key) {
+    const spki = await crypto.subtle.exportKey('spki', key);
+    return toPem(ab2b64(spki), "PUBLIC KEY");
+}
+
+async function exportPrivateKeyToPem(key) {
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', key);
+    return toPem(ab2b64(pkcs8), "PRIVATE KEY");
+}
+
+// DERIVE AES-GCM KEY FROM PASSPHRASE + SALT (PBKDF2)
+async function deriveKey(passphrase, salt) {
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(passphrase),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+    );
+
+    return crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt,
+            iterations: 300000,
+            hash: "SHA-256"
+        },
+        baseKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}
+
+async function aesGcmEncrypt(key, data) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, data);
+    return { iv, ciphertext: new Uint8Array(ciphertext) };
+}
+
+async function aesGcmDecrypt(key, iv, ciphertext) {
+    return crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ciphertext);
+}
+
+// RSA Key Generation (Enc + Sign)
+async function generateRSAKeyPairs() {
+    const encKeys = await crypto.subtle.generateKey(
+        {
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1,0,1]),
+            hash: "SHA-256"
+        },
+        true,
+        ["encrypt", "decrypt"]
+    );
+
+    const signKeys = await crypto.subtle.generateKey(
+        {
+            name: "RSASSA-PKCS1-v1_5",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1,0,1]),
+            hash: "SHA-256"
+        },
+        true,
+        ["sign", "verify"]
+    );
+
+    return { encKeys, signKeys };
+}
+
+// EXPORT KEYS TO RAW BUFFERS (SPKI/PKCS8)
+async function exportAllKeysRaw(keys) {
+    // Returns object with raw Uint8Arrays for each PEM key part
+    const encPubRaw = new Uint8Array(await crypto.subtle.exportKey("spki", keys.encKeys.publicKey));
+    const encPrivRaw = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keys.encKeys.privateKey));
+    const signPubRaw = new Uint8Array(await crypto.subtle.exportKey("spki", keys.signKeys.publicKey));
+    const signPrivRaw = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keys.signKeys.privateKey));
+    return { encPubRaw, encPrivRaw, signPubRaw, signPrivRaw };
+}
+
+// Combine keys as length-prefixed slices:
+// [4-byte big endian length][bytes] x4
+function combineRawKeys(encPub, encPriv, signPub, signPriv) {
+    function lenPrefix(buf){
+        const length = buf.length;
+        const arr = new Uint8Array(4 + length);
+        arr[0] = (length >> 24) & 0xff;
+        arr[1] = (length >> 16) & 0xff;
+        arr[2] = (length >> 8) & 0xff;
+        arr[3] = (length) & 0xff;
+        arr.set(buf,4);
+        return arr;
+    }
+
+    return concatArrays(lenPrefix(encPub), lenPrefix(encPriv), lenPrefix(signPub), lenPrefix(signPriv));
+}
+
+function parseCombinedRawKeys(buf) {
+    let offset = 0;
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+    function readLength() {
+        if (offset +4 > buf.length) throw new Error("Invalid key data length");
+        let len = view.getUint32(offset, false);
+        offset +=4;
+        return len;
+    }
+
+    function readSlice(len) {
+        if (offset + len > buf.length) throw new Error("Invalid key data length");
+        let slice = buf.slice(offset, offset+len);
+        offset += len;
+        return slice;
+    }
+
+    const encPubRaw = readSlice(readLength());
+    const encPrivRaw = readSlice(readLength());
+    const signPubRaw = readSlice(readLength());
+    const signPrivRaw = readSlice(readLength());
+
+    return { encPubRaw, encPrivRaw, signPubRaw, signPrivRaw };
+}
+
+// Encrypt combined keys raw buffer with passphrase using AES-GCM (salt + iv prepended)
+async function encryptKeysWithPassphrase(pass, combinedRawKeys) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await deriveKey(pass, salt);
+    const { iv, ciphertext } = await aesGcmEncrypt(key, combinedRawKeys);
+    return concatArrays(salt, iv, ciphertext);
+}
+
+// Decrypt keys blob with passphrase
+async function decryptKeysWithPassphrase(pass, encryptedBlob) {
+    if (encryptedBlob.length < 16 + 12) throw new Error("Encrypted keys blob too short");
+    const salt = encryptedBlob.slice(0,16);
+    const iv = encryptedBlob.slice(16,28);
+    const ciphertext = encryptedBlob.slice(28);
+    const key = await deriveKey(pass, salt);
+    const rawKeysBuf = await aesGcmDecrypt(key, iv, ciphertext);
+    return new Uint8Array(rawKeysBuf);
+}
+
+// Convert raw keys (Uint8Arrays) to PEM strings by base64 encoding + PEM formatting
+function rawKeyToPem(rawKey, type) {
+    return toPem(ab2b64(rawKey), type);
+}
+
+// Parse PEM string to raw Uint8Array buffer
+function pemToRawKey(pem) {
+    return new Uint8Array(b642ab(pemToBase64(pem)));
+}
+
+// Parse PEM textboxes to raw keys for export & encryption
+function readKeysFromTextBoxes() {
+    const pubPem = document.getElementById('publicKeyBox').value.trim();
+    const privPem = document.getElementById('privateKeyBox').value.trim();
+
+    if (!pubPem || !privPem) throw new Error("Your Public and Private key PEMs must not be empty for export.");
+
+    // Assume these PEMs are encoding *encryption* keys
+    const encPubRaw = pemToRawKey(pubPem);
+    const encPrivRaw = pemToRawKey(privPem);
+
+    // For simplicity, reuse same keys for signing (could separate)
+    // So we will use same enc keys for sign keys to keep demo simple
+    // Otherwise, you'd add additional textboxes or handling for sign keys
+    const signPubRaw = encPubRaw;
+    const signPrivRaw = encPrivRaw;
+
+    return { encPubRaw, encPrivRaw, signPubRaw, signPrivRaw };
+}
+
+// Import your own keys freshly from PEM strings for encryption/signing operations
+async function importYourKeysFromTextBoxes() {
+    const pubPem = document.getElementById('publicKeyBox').value.trim();
+    const privPem = document.getElementById('privateKeyBox').value.trim();
+    if (!pubPem || !privPem) throw new Error("Your Public and Private key PEMs must not be empty.");
+
+    // Import encryption keys
+    const encPublicKey = await importPublicKeyFromPem(pubPem);
+    const encPrivateKey = await importPrivateKeyFromPem(privPem);
+
+    // Import signing keys same as enc keys here for simplicity (in real world separate)
+    const signPublicKey = await importSignPublicKeyFromPem(pubPem);
+    const signPrivateKey = await importSignPrivateKeyFromPem(privPem);
+
+    return {
+        encKeys: { publicKey: encPublicKey, privateKey: encPrivateKey },
+        signKeys: { publicKey: signPublicKey, privateKey: signPrivateKey }
+    };
+}
+
+// Encrypt and sign message string, reads YOUR private key and RECIPIENT's public key
+async function encryptAndSignMessage(message) {
+    const yourKeys = await importYourKeysFromTextBoxes();
+    const recipientPubPem = document.getElementById('recipientPublicKeyBox').value.trim();
+
+    if (!recipientPubPem) throw new Error("Recipient's Public Key must be provided to encrypt the message.");
+
+    const recipientEncPublicKey = await importPublicKeyFromPem(recipientPubPem);
+
+    const encoder = new TextEncoder();
+    const messageBytes = encoder.encode(message);
+
+    // Generate AES key
+    const aesKey = await crypto.subtle.generateKey(
+        {name:"AES-GCM", length:256}, true, ["encrypt", "decrypt"]);
+
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    // Encrypt message
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, aesKey, messageBytes));
+
+    // Export AES key raw
+    const rawAesKey = new Uint8Array(await crypto.subtle.exportKey("raw", aesKey));
+
+    // Encrypt AES key with RECIPIENT's RSA-OAEP public key
+    const encryptedAESKeyBuf = new Uint8Array(await crypto.subtle.encrypt({name:"RSA-OAEP"}, recipientEncPublicKey, rawAesKey));
+
+    // Sign original message with YOUR RSA private signing key
+    const signatureBuf = new Uint8Array(await crypto.subtle.sign({name:"RSASSA-PKCS1-v1_5"}, yourKeys.signKeys.privateKey, messageBytes));
+
+    // Concatenate: IV(12) + encryptedAESKey(256) + ciphertext + signature(256)
+    return ab2b64(concatArrays(iv, encryptedAESKeyBuf, ciphertext, signatureBuf));
+}
+
+// Decrypt and verify message, reads YOUR private key and RECIPIENT's public key (for verification)
+async function decryptAndVerifyMessage(base64Blob) {
+    const yourKeys = await importYourKeysFromTextBoxes();
+    const senderPubPem = document.getElementById('recipientPublicKeyBox').value.trim();
+
+    if (!senderPubPem) throw new Error("Sender's Public Key must be provided to verify the signature.");
+
+    const senderSignPublicKey = await importSignPublicKeyFromPem(senderPubPem);
+
+    const buf = new Uint8Array(b642ab(base64Blob));
+    if (buf.length < 12 + 256 + 256) throw new Error("Invalid encrypted message length");
+
+    const iv = buf.slice(0,12);
+    const encryptedAESKey = buf.slice(12, 12+256);
+    const signature = buf.slice(buf.length - 256);
+    const ciphertext = buf.slice(12+256, buf.length - 256);
+
+    // Decrypt AES key with YOUR RSA private key
+    const rawAesKeyBuf = await crypto.subtle.decrypt({name:"RSA-OAEP"}, yourKeys.encKeys.privateKey, encryptedAESKey);
+
+    const aesKey = await crypto.subtle.importKey("raw", rawAesKeyBuf, {name:"AES-GCM"}, false, ["decrypt"]);
+
+    // Decrypt ciphertext
+    const decryptedBuf = await crypto.subtle.decrypt({name:"AES-GCM", iv}, aesKey, ciphertext);
+
+    // Verify signature on decrypted plaintext using SENDER's public key
+    const verified = await crypto.subtle.verify(
+        {name:"RSASSA-PKCS1-v1_5"},
+        senderSignPublicKey,
+        signature,
+        decryptedBuf
+    );
+
+    const decoder = new TextDecoder();
+    const decryptedText = decoder.decode(decryptedBuf);
+
+    return { decryptedText, verified };
+}
+
+// Event Listeners for buttons
+document.addEventListener('DOMContentLoaded', () => {
+    // Generate keys and write PEM to text boxes (encryption and signing keys identical)
+    document.getElementById("genKeysBtn").onclick = async () => {
+        const genKeysBtn = document.getElementById("genKeysBtn");
+        const resultBox = document.getElementById("resultBox");
+        const signatureVerificationResult = document.getElementById("signatureVerificationResult");
+        const publicKeyBox = document.getElementById("publicKeyBox");
+        const privateKeyBox = document.getElementById("privateKeyBox");
+        const encryptedKeysBox = document.getElementById("encryptedKeysBox");
+
+        genKeysBtn.disabled = true;
+        genKeysBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i> Generating keys...';
+
+        try {
+            const keys = await generateRSAKeyPairs();
+
+            // Export keys to PEM
+            const pubPemEnc = await exportPublicKeyToPem(keys.encKeys.publicKey);
+            const privPemEnc = await exportPrivateKeyToPem(keys.encKeys.privateKey);
+
+            // For simplicity, use enc keys also as sign keys
+            // Write to textareas
+            publicKeyBox.value = pubPemEnc;
+            privateKeyBox.value = privPemEnc;
+            encryptedKeysBox.value = "";
+            resultBox.value = "Keys generated successfully.";
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+
+        } catch (e) {
+            resultBox.value = "Key generation failed: " + e.message;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+        }
+
+        genKeysBtn.disabled = false;
+        genKeysBtn.innerHTML = '<i class="fas fa-plus-circle mr-2"></i> Generate RSA Key Pair';
+    };
+
+    // Export keys: read keys from textboxes, combine, encrypt with passphrase, output base64 blob
+    document.getElementById("exportKeysBtn").onclick = async () => {
+        const exportKeysBtn = document.getElementById("exportKeysBtn");
+        const passphraseInput = document.getElementById("passphraseInput");
+        const encryptedKeysBox = document.getElementById("encryptedKeysBox");
+        const resultBox = document.getElementById("resultBox");
+        const signatureVerificationResult = document.getElementById("signatureVerificationResult");
+
+        const pass = passphraseInput.value;
+        if (!pass) {
+            alert("A passphrase is required to export keys.");
+            return;
+        }
+
+        exportKeysBtn.disabled = true;
+        exportKeysBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i> Encrypting keys...';
+
+        try {
+            const raw = readKeysFromTextBoxes();
+            const combinedRaw = combineRawKeys(raw.encPubRaw, raw.encPrivRaw, raw.signPubRaw, raw.signPrivRaw);
+            const encryptedBlob = await encryptKeysWithPassphrase(pass, combinedRaw);
+            encryptedKeysBox.value = ab2b64(encryptedBlob);
+            resultBox.value = "Keys encrypted and exported.";
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+
+        } catch(e) {
+            resultBox.value = "Export failed: " + e.message;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+        }
+
+        exportKeysBtn.disabled = false;
+        exportKeysBtn.innerHTML = '<i class="fas fa-file-export mr-2"></i> Export Keys';
+    };
+
+    // Import keys: decrypt base64 blob with passphrase, parse keys, write PEM to textboxes
+    document.getElementById("importKeysBtn").onclick = async () => {
+        const importKeysBtn = document.getElementById("importKeysBtn");
+        const passphraseInput = document.getElementById("passphraseInput");
+        const encryptedKeysBox = document.getElementById("encryptedKeysBox");
+        const publicKeyBox = document.getElementById("publicKeyBox");
+        const privateKeyBox = document.getElementById("privateKeyBox");
+        const resultBox = document.getElementById("resultBox");
+        const signatureVerificationResult = document.getElementById("signatureVerificationResult");
+
+        const pass = passphraseInput.value;
+        const encryptedBase64 = encryptedKeysBox.value.trim();
+
+        if (!encryptedBase64) {
+            alert("Paste the encrypted keys in Base64 format to import.");
+            return;
+        }
+         if (!pass) {
+            alert("A passphrase is required to import keys.");
+            return;
+        }
+
+        importKeysBtn.disabled = true;
+        importKeysBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i> Decrypting keys...';
+
+        try {
+            const encryptedBlob = new Uint8Array(b642ab(encryptedBase64));
+            const decryptedRaw = await decryptKeysWithPassphrase(pass, encryptedBlob);
+            const { encPubRaw, encPrivRaw, signPubRaw, signPrivRaw } = parseCombinedRawKeys(decryptedRaw);
+
+            // Convert raw to PEM strings
+            const pubPem = rawKeyToPem(encPubRaw, "PUBLIC KEY");
+            const privPem = rawKeyToPem(encPrivRaw, "PRIVATE KEY");
+
+            // We ignore sign keys here, show encryption keys only
+            publicKeyBox.value = pubPem;
+            privateKeyBox.value = privPem;
+
+            resultBox.value = "Keys successfully decrypted and imported.";
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+
+        } catch(e) {
+            resultBox.value = "Import failed. Please check the passphrase and data: " + e.message;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+        }
+
+        importKeysBtn.disabled = false;
+        importKeysBtn.innerHTML = '<i class="fas fa-file-import mr-2"></i> Import Keys';
+    };
+
+    // Encrypt message (read YOUR private key and RECIPIENT's public key)
+    document.getElementById("encryptBtn").onclick = async () => {
+        const encryptBtn = document.getElementById("encryptBtn");
+        const messageBox = document.getElementById("messageBox");
+        const resultBox = document.getElementById("resultBox");
+        const signatureVerificationResult = document.getElementById("signatureVerificationResult");
+
+        const msg = messageBox.value;
+        if (!msg) {
+            alert("Please enter a message to encrypt.");
+            return;
+        }
+
+        encryptBtn.disabled = true;
+        encryptBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i> Encrypting...';
+
+        try {
+            const encrypted = await encryptAndSignMessage(msg);
+            resultBox.value = encrypted;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+
+        } catch(e) {
+            resultBox.value = "Encryption failed: " + e.message;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+        }
+
+        encryptBtn.disabled = false;
+        encryptBtn.innerHTML = '<i class="fas fa-lock mr-2"></i> Encrypt & Sign';
+    };
+
+    // Decrypt message (read YOUR private key and SENDER's public key from recipient box)
+    document.getElementById("decryptBtn").onclick = async () => {
+        const decryptBtn = document.getElementById("decryptBtn");
+        const messageBox = document.getElementById("messageBox");
+        const resultBox = document.getElementById("resultBox");
+        const signatureVerificationResult = document.getElementById("signatureVerificationResult");
+
+        const blob = messageBox.value.trim();
+        if (!blob) {
+            alert("Please enter the encrypted message in Base64 format to decrypt.");
+            return;
+        }
+
+        decryptBtn.disabled = true;
+        decryptBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i> Decrypting...';
+
+        try {
+            const { decryptedText, verified } = await decryptAndVerifyMessage(blob);
+            resultBox.value = decryptedText;
+
+            if (verified) {
+                signatureVerificationResult.textContent = "Signature verified ✅";
+                signatureVerificationResult.className = "w-full p-3 border border-green-500 rounded-md bg-green-100 dark:bg-green-900";
+            } else {
+                signatureVerificationResult.textContent = "Incorrect signature ⚠️";
+                signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-100 dark:bg-red-900";
+            }
+
+        } catch(e) {
+            resultBox.value = "Decryption or verification failed: " + e.message;
+            signatureVerificationResult.textContent = "Verification status will appear here";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+        }
+
+        decryptBtn.disabled = false;
+        decryptBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i> Decrypt & Verify';
+    };
+});
