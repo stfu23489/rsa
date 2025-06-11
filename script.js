@@ -33,6 +33,16 @@ function togglePasswordVisibility(inputId) {
     }
 }
 
+// Utility function to show a "Done" state for a button
+function showDoneState(button, originalHTML) {
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-check-circle mr-2"></i> Done';
+    setTimeout(() => {
+        button.innerHTML = originalHTML;
+        button.disabled = false;
+    }, 1500); // 1.5 seconds
+}
+
 // UTILS
 // Converts ArrayBuffer to Base64 string
 function ab2b64(buf) {
@@ -321,10 +331,6 @@ async function encryptAndSignMessage(message) {
 
     const recipientEncPublicKey = await importPublicKeyFromPem(recipientPubPem);
 
-    // Determine the RSA key's actual byte length from the public key's modulus 'n'
-    const recipientKeyJwk = await crypto.subtle.exportKey("jwk", recipientEncPublicKey);
-    const rsaKeyByteLength = Math.ceil(recipientKeyJwk.n.length * 3 / 4); // Base64 decoded length of 'n'
-
     const encoder = new TextEncoder();
     const messageBytes = encoder.encode(message);
 
@@ -342,23 +348,21 @@ async function encryptAndSignMessage(message) {
 
     // Encrypt AES key with RECIPIENT's RSA-OAEP public key
     const encryptedAESKeyBuf = new Uint8Array(await crypto.subtle.encrypt({name:"RSA-OAEP"}, recipientEncPublicKey, rawAesKey));
-    // Crucial change: Store the actual byte length produced by the RSA encryption operation
-    const actualRsaOutputLength = encryptedAESKeyBuf.byteLength;
+    const encryptedAESKeyLength = encryptedAESKeyBuf.byteLength; // Store length of encrypted AES key
 
     // Sign original message with YOUR RSA private signing key
     const signatureBuf = new Uint8Array(await crypto.subtle.sign({name:"RSASSA-PKCS1-v1_5"}, yourKeys.signKeys.privateKey, messageBytes));
+    const signatureLength = signatureBuf.byteLength; // Store length of signature
 
-    // Assert that signatureBuf length also matches actualRsaOutputLength
-    if (signatureBuf.byteLength !== actualRsaOutputLength) {
-        console.warn("Signature buffer length does not match encrypted AES key buffer length. This might cause issues.");
-    }
+    // Prepend lengths as 4-byte big-endian integers
+    const encryptedAESKeyLengthBytes = new Uint8Array(4);
+    new DataView(encryptedAESKeyLengthBytes.buffer).setUint32(0, encryptedAESKeyLength, false);
 
-    // Prepend actualRsaOutputLength as a 4-byte big-endian integer
-    const rsaOutputLengthBytes = new Uint8Array(4);
-    new DataView(rsaOutputLengthBytes.buffer).setUint32(0, actualRsaOutputLength, false); // false for big-endian
+    const signatureLengthBytes = new Uint8Array(4);
+    new DataView(signatureLengthBytes.buffer).setUint32(0, signatureLength, false);
 
-    // Concatenate: RSA_Output_Length(4) + IV(12) + encryptedAESKey(actualRsaOutputLength) + ciphertext + signature(actualRsaOutputLength)
-    const finalBlob = concatArrays(rsaOutputLengthBytes, iv, encryptedAESKeyBuf, ciphertext, signatureBuf);
+    // Concatenate: EncryptedAESKey_Length(4) + Signature_Length(4) + IV(12) + encryptedAESKey + ciphertext + signature
+    const finalBlob = concatArrays(encryptedAESKeyLengthBytes, signatureLengthBytes, iv, encryptedAESKeyBuf, ciphertext, signatureBuf);
     return ab2b64(finalBlob);
 }
 
@@ -375,29 +379,36 @@ async function decryptAndVerifyMessage(base64Blob) {
 
     const buf = new Uint8Array(b642ab(base64Blob));
 
-    // Read actualRsaOutputLength from the first 4 bytes
+    // Read encryptedAESKeyLength from the first 4 bytes
     if (buf.length < 4) {
-        throw new Error("Invalid encrypted message length: missing RSA output length.");
+        throw new Error("Invalid encrypted message length: missing encrypted AES key length.");
     }
-    const rsaOutputLength = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(0, false);
+    const encryptedAESKeyLength = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(0, false);
 
-    const MIN_EXPECTED_LENGTH = 4 + 12 + rsaOutputLength + rsaOutputLength;
+    // Read signatureLength from the next 4 bytes
+    if (buf.length < 8) { // 4 bytes for encryptedAESKeyLength + 4 bytes for signatureLength
+        throw new Error("Invalid encrypted message length: missing signature length.");
+    }
+    const signatureLength = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(4, false);
+
+
+    const MIN_EXPECTED_LENGTH = 4 + 4 + 12 + encryptedAESKeyLength + signatureLength; // 4 for encKeyLen, 4 for sigLen, 12 for IV
     if (buf.length < MIN_EXPECTED_LENGTH) {
-        throw new Error(`Invalid encrypted message length. Expected at least ${MIN_EXPECTED_LENGTH} bytes for RSA output length ${rsaOutputLength}, but got ${buf.length}.`);
+        throw new Error(`Invalid encrypted message length. Expected at least ${MIN_EXPECTED_LENGTH} bytes for encrypted AES key length ${encryptedAESKeyLength} and signature length ${signatureLength}, but got ${buf.length}.`);
     }
 
-    let offset = 4; // Start after rsaOutputLength
+    let offset = 8; // Start after encryptedAESKeyLength and signatureLength
 
     const iv = buf.slice(offset, offset + 12);
     offset += 12;
 
-    const encryptedAESKey = buf.slice(offset, offset + rsaOutputLength);
-    offset += rsaOutputLength;
+    const encryptedAESKey = buf.slice(offset, offset + encryptedAESKeyLength);
+    offset += encryptedAESKeyLength;
 
-    // The signature is always at the end of the combined buffer and its length is rsaOutputLength
-    const signature = buf.slice(buf.length - rsaOutputLength);
+    // The signature is at the end of the combined buffer
+    const signature = buf.slice(buf.length - signatureLength);
     // The ciphertext is everything between the end of encryptedAESKey and the start of the signature
-    const ciphertext = buf.slice(offset, buf.length - rsaOutputLength);
+    const ciphertext = buf.slice(offset, buf.length - signatureLength);
 
     // Decrypt AES key with YOUR RSA private key
     const rawAesKeyBuf = await crypto.subtle.decrypt({name:"RSA-OAEP"}, yourKeys.encKeys.privateKey, encryptedAESKey);
@@ -423,9 +434,20 @@ async function decryptAndVerifyMessage(base64Blob) {
 
 // Event Listeners for buttons
 document.addEventListener('DOMContentLoaded', () => {
+    // Utility function to show a temporary message on a button
+    function showTemporaryButtonMessage(button, originalHTML, message, duration = 3000) { // Default 3 seconds
+        button.disabled = true;
+        button.innerHTML = message;
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }, duration);
+    }
+
     // Generate keys and write PEM to text boxes (encryption and signing keys identical)
     document.getElementById("genKeysBtn").onclick = async () => {
         const genKeysBtn = document.getElementById("genKeysBtn");
+        const originalBtnHTML = genKeysBtn.innerHTML; // Store original HTML
         const keySizeInput = document.getElementById("keySizeInput");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
@@ -435,8 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const modulusLength = parseInt(keySizeInput.value, 10);
         if (isNaN(modulusLength) || modulusLength < 1024 || modulusLength % 128 !== 0) {
-            // Replaced alert with custom UI message.
-            resultBox.value = "Please enter a valid RSA key size (e.g., 1024, 2048, 4096). Must be a multiple of 128.";
+            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, '<i class="fas fa-exclamation-triangle mr-2"></i> Invalid Key Size (Must be multiple of 128)');
             return;
         }
 
@@ -456,32 +477,31 @@ document.addEventListener('DOMContentLoaded', () => {
             publicKeyBox.value = pubPemEnc;
             privateKeyBox.value = privPemEnc;
             encryptedKeysBox.value = ""; // Clear exported keys when new keys are generated
-            resultBox.value = `Keys (RSA-${modulusLength} bits) generated successfully.`;
             signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900 font-mono text-sm";
+            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, `<i class="fas fa-check-circle mr-2"></i> Keys Generated!`);
+
 
         } catch (e) {
-            resultBox.value = "Key generation failed: " + e.message;
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, `<i class="fas fa-times-circle mr-2"></i> Generation Failed: ${e.message}`);
         }
-
-        genKeysBtn.disabled = false;
-        genKeysBtn.innerHTML = '<i class="fas fa-plus-circle mr-2"></i> Generate RSA Key Pair';
     };
 
     // Export keys: read keys from textboxes, combine, encrypt with passphrase, output base64 blob
     document.getElementById("exportKeysBtn").onclick = async () => {
         const exportKeysBtn = document.getElementById("exportKeysBtn");
+        const originalBtnHTML = exportKeysBtn.innerHTML; // Store original HTML
         const passphraseInput = document.getElementById("passphraseInput");
         const encryptedKeysBox = document.getElementById("encryptedKeysBox");
-        const resultBox = document.getElementById("resultBox");
+        const resultBox = document.getElementById("resultBox"); // Keep for other messages if needed
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const pass = passphraseInput.value;
         if (!pass) {
             // Replaced alert with custom UI message.
-            resultBox.value = "A passphrase is required to export keys.";
+            encryptedKeysBox.value = "A passphrase is required to export keys.";
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
             return;
@@ -495,28 +515,29 @@ document.addEventListener('DOMContentLoaded', () => {
             const combinedRaw = combineRawKeys(raw.encPubRaw, raw.encPrivRaw, raw.signPubRaw, raw.signPrivRaw);
             const encryptedBlob = await encryptKeysWithPassphrase(pass, combinedRaw);
             encryptedKeysBox.value = ab2b64(encryptedBlob);
-            resultBox.value = "Keys encrypted and exported.";
+            // resultBox.value = "Keys encrypted and exported."; // Not needed here anymore
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            showDoneState(exportKeysBtn, originalBtnHTML);
 
         } catch(e) {
-            resultBox.value = "Export failed: " + e.message;
+            encryptedKeysBox.value = "Export failed: " + e.message;
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            exportKeysBtn.disabled = false;
+            exportKeysBtn.innerHTML = originalBtnHTML;
         }
-
-        exportKeysBtn.disabled = false;
-        exportKeysBtn.innerHTML = '<i class="fas fa-file-export mr-2"></i> Export Keys';
     };
 
     // Import keys: decrypt base64 blob with passphrase, parse keys, write PEM to textboxes
     document.getElementById("importKeysBtn").onclick = async () => {
         const importKeysBtn = document.getElementById("importKeysBtn");
+        const originalBtnHTML = importKeysBtn.innerHTML; // Store original HTML
         const passphraseInput = document.getElementById("passphraseInput");
         const encryptedKeysBox = document.getElementById("encryptedKeysBox");
         const publicKeyBox = document.getElementById("publicKeyBox");
         const privateKeyBox = document.getElementById("privateKeyBox");
-        const resultBox = document.getElementById("resultBox");
+        const resultBox = document.getElementById("resultBox"); // Keep for other messages if needed
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const pass = passphraseInput.value;
@@ -524,14 +545,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!encryptedBase64) {
             // Replaced alert with custom UI message.
-            resultBox.value = "Paste the encrypted keys in Base64 format to import.";
+            encryptedKeysBox.value = "Paste the encrypted keys in Base64 format to import.";
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
             return;
         }
          if (!pass) {
             // Replaced alert with custom UI message.
-            resultBox.value = "A passphrase is required to import keys.";
+            encryptedKeysBox.value = "A passphrase is required to import keys.";
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
             return;
@@ -553,23 +574,25 @@ document.addEventListener('DOMContentLoaded', () => {
             publicKeyBox.value = pubPem;
             privateKeyBox.value = privPem;
 
-            resultBox.value = "Keys successfully decrypted and imported.";
+            encryptedKeysBox.value = "Keys successfully decrypted and imported."; // Display success in the encryptedKeysBox
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            showDoneState(importKeysBtn, originalBtnHTML);
+
 
         } catch(e) {
-            resultBox.value = "Import failed. Please check the passphrase and data: " + e.message;
+            encryptedKeysBox.value = "Import failed. Please check the passphrase and data: " + e.message;
             signatureVerificationResult.textContent = "Verification status will appear here";
                 signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            importKeysBtn.disabled = false;
+            importKeysBtn.innerHTML = originalBtnHTML;
         }
-
-        importKeysBtn.disabled = false;
-        importKeysBtn.innerHTML = '<i class="fas fa-file-import mr-2"></i> Import Keys';
     };
 
     // Encrypt message (read YOUR private key and RECIPIENT's public key)
     document.getElementById("encryptBtn").onclick = async () => {
         const encryptBtn = document.getElementById("encryptBtn");
+        const originalBtnHTML = encryptBtn.innerHTML; // Store original HTML
         const messageBox = document.getElementById("messageBox");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
@@ -591,20 +614,21 @@ document.addEventListener('DOMContentLoaded', () => {
             resultBox.value = encrypted;
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            showDoneState(encryptBtn, originalBtnHTML);
 
         } catch(e) {
             resultBox.value = "Encryption failed: " + e.message;
             signatureVerificationResult.textContent = "Verification status will appear here";
             signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            encryptBtn.disabled = false;
+            encryptBtn.innerHTML = originalBtnHTML;
         }
-
-        encryptBtn.disabled = false;
-        encryptBtn.innerHTML = '<i class="fas fa-lock mr-2"></i> Encrypt & Sign';
     };
 
     // Decrypt message (read YOUR private key and SENDER's public key from recipient box)
     document.getElementById("decryptBtn").onclick = async () => {
         const decryptBtn = document.getElementById("decryptBtn");
+        const originalBtnHTML = decryptBtn.innerHTML; // Store original HTML
         const messageBox = document.getElementById("messageBox");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
@@ -632,14 +656,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 signatureVerificationResult.textContent = "Incorrect signature ⚠️";
                 signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-100 dark:bg-red-900";
             }
+            showDoneState(decryptBtn, originalBtnHTML);
+
 
         } catch(e) {
             resultBox.value = "Decryption or verification failed: " + e.message;
             signatureVerificationResult.textContent = "Verification status will appear here";
                 signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            decryptBtn.disabled = false;
+            decryptBtn.innerHTML = originalBtnHTML;
         }
-
-        decryptBtn.disabled = false;
-        decryptBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i> Decrypt & Verify';
     };
 });
