@@ -434,6 +434,29 @@ async function decryptAndVerifyMessage(base64Blob) {
 
 // Event Listeners for buttons
 document.addEventListener('DOMContentLoaded', () => {
+    // Store default states for elements
+    const defaultStates = {
+        genKeysBtn: {
+            originalHTML: document.getElementById("genKeysBtn").innerHTML,
+        },
+        exportKeysBtn: {
+            originalHTML: document.getElementById("exportKeysBtn").innerHTML,
+        },
+        importKeysBtn: {
+            originalHTML: document.getElementById("importKeysBtn").innerHTML,
+        },
+        encryptBtn: {
+            originalHTML: document.getElementById("encryptBtn").innerHTML,
+        },
+        decryptBtn: {
+            originalHTML: document.getElementById("decryptBtn").innerHTML,
+        },
+        signatureVerificationResult: {
+            textContent: "Verification status will appear here",
+            className: "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900 font-mono text-sm",
+        },
+    };
+
     // Utility function to show a temporary message on a button
     function showTemporaryButtonMessage(button, originalHTML, message, duration = 3000) { // Default 3 seconds
         button.disabled = true;
@@ -447,7 +470,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Generate keys and write PEM to text boxes (encryption and signing keys identical)
     document.getElementById("genKeysBtn").onclick = async () => {
         const genKeysBtn = document.getElementById("genKeysBtn");
-        const originalBtnHTML = genKeysBtn.innerHTML; // Store original HTML
         const keySizeInput = document.getElementById("keySizeInput");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
@@ -457,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const modulusLength = parseInt(keySizeInput.value, 10);
         if (isNaN(modulusLength) || modulusLength < 1024 || modulusLength % 128 !== 0) {
-            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, '<i class="fas fa-exclamation-triangle mr-2"></i> Invalid Key Size (Must be multiple of 128)');
+            showTemporaryButtonMessage(genKeysBtn, defaultStates.genKeysBtn.originalHTML, '<i class="fas fa-exclamation-triangle mr-2"></i> Invalid Key Size (Must be multiple of 128)');
             return;
         }
 
@@ -477,33 +499,30 @@ document.addEventListener('DOMContentLoaded', () => {
             publicKeyBox.value = pubPemEnc;
             privateKeyBox.value = privPemEnc;
             encryptedKeysBox.value = ""; // Clear exported keys when new keys are generated
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900 font-mono text-sm";
-            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, `<i class="fas fa-check-circle mr-2"></i> Keys Generated!`);
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            showTemporaryButtonMessage(genKeysBtn, defaultStates.genKeysBtn.originalHTML, `<i class="fas fa-check-circle mr-2"></i> Keys Generated!`);
 
 
         } catch (e) {
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
-            showTemporaryButtonMessage(genKeysBtn, originalBtnHTML, `<i class="fas fa-times-circle mr-2"></i> Generation Failed: ${e.message}`);
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            showTemporaryButtonMessage(genKeysBtn, defaultStates.genKeysBtn.originalHTML, `<i class="fas fa-times-circle mr-2"></i> Generation Failed: ${e.message}`);
         }
     };
 
     // Export keys: read keys from textboxes, combine, encrypt with passphrase, output base64 blob
     document.getElementById("exportKeysBtn").onclick = async () => {
         const exportKeysBtn = document.getElementById("exportKeysBtn");
-        const originalBtnHTML = exportKeysBtn.innerHTML; // Store original HTML
         const passphraseInput = document.getElementById("passphraseInput");
         const encryptedKeysBox = document.getElementById("encryptedKeysBox");
-        const resultBox = document.getElementById("resultBox"); // Keep for other messages if needed
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const pass = passphraseInput.value;
         if (!pass) {
-            // Replaced alert with custom UI message.
             encryptedKeysBox.value = "A passphrase is required to export keys.";
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             return;
         }
 
@@ -515,46 +534,41 @@ document.addEventListener('DOMContentLoaded', () => {
             const combinedRaw = combineRawKeys(raw.encPubRaw, raw.encPrivRaw, raw.signPubRaw, raw.signPrivRaw);
             const encryptedBlob = await encryptKeysWithPassphrase(pass, combinedRaw);
             encryptedKeysBox.value = ab2b64(encryptedBlob);
-            // resultBox.value = "Keys encrypted and exported."; // Not needed here anymore
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
-            showDoneState(exportKeysBtn, originalBtnHTML);
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            showDoneState(exportKeysBtn, defaultStates.exportKeysBtn.originalHTML);
 
         } catch(e) {
             encryptedKeysBox.value = "Export failed: " + e.message;
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             exportKeysBtn.disabled = false;
-            exportKeysBtn.innerHTML = originalBtnHTML;
+            exportKeysBtn.innerHTML = defaultStates.exportKeysBtn.originalHTML;
         }
     };
 
     // Import keys: decrypt base64 blob with passphrase, parse keys, write PEM to textboxes
     document.getElementById("importKeysBtn").onclick = async () => {
         const importKeysBtn = document.getElementById("importKeysBtn");
-        const originalBtnHTML = importKeysBtn.innerHTML; // Store original HTML
         const passphraseInput = document.getElementById("passphraseInput");
         const encryptedKeysBox = document.getElementById("encryptedKeysBox");
         const publicKeyBox = document.getElementById("publicKeyBox");
         const privateKeyBox = document.getElementById("privateKeyBox");
-        const resultBox = document.getElementById("resultBox"); // Keep for other messages if needed
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const pass = passphraseInput.value;
         const encryptedBase64 = encryptedKeysBox.value.trim();
 
         if (!encryptedBase64) {
-            // Replaced alert with custom UI message.
             encryptedKeysBox.value = "Paste the encrypted keys in Base64 format to import.";
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             return;
         }
          if (!pass) {
-            // Replaced alert with custom UI message.
             encryptedKeysBox.value = "A passphrase is required to import keys.";
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             return;
         }
 
@@ -575,34 +589,32 @@ document.addEventListener('DOMContentLoaded', () => {
             privateKeyBox.value = privPem;
 
             encryptedKeysBox.value = "Keys successfully decrypted and imported."; // Display success in the encryptedKeysBox
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
-            showDoneState(importKeysBtn, originalBtnHTML);
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            showDoneState(importKeysBtn, defaultStates.importKeysBtn.originalHTML);
 
 
         } catch(e) {
             encryptedKeysBox.value = "Import failed. Please check the passphrase and data: " + e.message;
-            signatureVerificationResult.textContent = "Verification status will appear here";
-                signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             importKeysBtn.disabled = false;
-            importKeysBtn.innerHTML = originalBtnHTML;
+            importKeysBtn.innerHTML = defaultStates.importKeysBtn.originalHTML;
         }
     };
 
     // Encrypt message (read YOUR private key and RECIPIENT's public key)
     document.getElementById("encryptBtn").onclick = async () => {
         const encryptBtn = document.getElementById("encryptBtn");
-        const originalBtnHTML = encryptBtn.innerHTML; // Store original HTML
         const messageBox = document.getElementById("messageBox");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const msg = messageBox.value;
         if (!msg) {
-            // Replaced alert with custom UI message.
             resultBox.value = "Please enter a message to encrypt.";
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             return;
         }
 
@@ -612,33 +624,31 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const encrypted = await encryptAndSignMessage(msg);
             resultBox.value = encrypted;
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
-            showDoneState(encryptBtn, originalBtnHTML);
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            showDoneState(encryptBtn, defaultStates.encryptBtn.originalHTML);
 
         } catch(e) {
             resultBox.value = "Encryption failed: " + e.message;
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             encryptBtn.disabled = false;
-            encryptBtn.innerHTML = originalBtnHTML;
+            encryptBtn.innerHTML = defaultStates.encryptBtn.originalHTML;
         }
     };
 
     // Decrypt message (read YOUR private key and SENDER's public key from recipient box)
     document.getElementById("decryptBtn").onclick = async () => {
         const decryptBtn = document.getElementById("decryptBtn");
-        const originalBtnHTML = decryptBtn.innerHTML; // Store original HTML
         const messageBox = document.getElementById("messageBox");
         const resultBox = document.getElementById("resultBox");
         const signatureVerificationResult = document.getElementById("signatureVerificationResult");
 
         const blob = messageBox.value.trim();
         if (!blob) {
-            // Replaced alert with custom UI message.
             resultBox.value = "Please enter the encrypted message in Base64 format to decrypt.";
-            signatureVerificationResult.textContent = "Verification status will appear here";
-            signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             return;
         }
 
@@ -650,21 +660,27 @@ document.addEventListener('DOMContentLoaded', () => {
             resultBox.value = decryptedText;
 
             if (verified) {
-                signatureVerificationResult.textContent = "Signature verified ✅";
-                signatureVerificationResult.className = "w-full p-3 border border-green-500 rounded-md bg-green-100 dark:bg-green-900";
+                signatureVerificationResult.textContent = "Signature matches the recipient's public key ✅";
+                signatureVerificationResult.className = "w-full p-3 border border-green-500 rounded-md bg-green-100 dark:bg-green-900 font-mono text-sm";
             } else {
-                signatureVerificationResult.textContent = "Incorrect signature ⚠️";
-                signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-100 dark:bg-red-900";
+                signatureVerificationResult.textContent = "Signature did not match recipient's public key ⚠️";
+                signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-100 dark:bg-red-900 font-mono text-sm";
             }
-            showDoneState(decryptBtn, originalBtnHTML);
+            
+            // Revert color after 1 second
+            setTimeout(() => {
+                signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
+            }, 1000); // 1000 milliseconds = 1 second
+
+            showDoneState(decryptBtn, defaultStates.decryptBtn.originalHTML);
 
 
         } catch(e) {
             resultBox.value = "Decryption or verification failed: " + e.message;
-            signatureVerificationResult.textContent = "Verification status will appear here";
-                signatureVerificationResult.className = "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900";
+            signatureVerificationResult.textContent = defaultStates.signatureVerificationResult.textContent;
+            signatureVerificationResult.className = defaultStates.signatureVerificationResult.className;
             decryptBtn.disabled = false;
-            decryptBtn.innerHTML = originalBtnHTML;
+            decryptBtn.innerHTML = defaultStates.decryptBtn.originalHTML;
         }
     };
 });
