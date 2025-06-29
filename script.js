@@ -551,7 +551,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         signatureVerificationResult: {
             textContent: "Verification status will appear here",
-            className: "w-full p-3 border border-gray-300 dark:border-gray-700 rounded-md bg-gray-100 dark:bg-gray-900 font-mono text-sm",
+            className: "w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm",
         },
     };
 
@@ -699,6 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
             importKeysBtn.disabled = false;
             importKeysBtn.innerHTML = defaultStates.importKeysBtn.originalHTML;
         }
+        passphraseInput.value = "";
     };
 
     // Encrypt message (read YOUR private key and RECIPIENT's public key)
@@ -733,6 +734,7 @@ document.addEventListener('DOMContentLoaded', () => {
             encryptBtn.disabled = false;
             encryptBtn.innerHTML = defaultStates.encryptBtn.originalHTML;
         }
+        messageBox.value = ''; // they are watching
     };
 
     // Decrypt message (read YOUR private key and SENDER's public key from recipient box)
@@ -759,10 +761,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (verified) {
                 signatureVerificationResult.textContent = "Signature matches the recipient's public key ✅";
-                signatureVerificationResult.className = "w-full p-3 border border-green-500 rounded-md bg-green-100 dark:bg-green-900 font-mono text-sm";
+                signatureVerificationResult.className = "w-full p-3 border border-green-500 rounded-md bg-green-900 font-mono text-sm";
             } else {
                 signatureVerificationResult.textContent = "Signature did not match recipient's public key ⚠️";
-                signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-100 dark:bg-red-900 font-mono text-sm";
+                signatureVerificationResult.className = "w-full p-3 border border-red-500 rounded-md bg-red-900 font-mono text-sm";
             }
             
             // Revert color after 1 second
