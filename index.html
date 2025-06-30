@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RSA + AES-256 Hybrid Encryption</title>
+    <title>RSA Encryption</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
@@ -15,8 +15,8 @@
                 <i class="fas fa-lock text-blue-300 text-2xl"></i>
             </div>
             <div>
-                <h1 class="text-3xl font-bold gradient-text">RSA + AES-256 Hybrid Encryption</h1>
-                <p class="text-gray-400">Secure your communications with modern cryptography</p>
+                <h1 class="text-3xl font-bold gradient-text">RSA Encryption</h1>
+                <p class="text-gray-400">With hybrid AES encryption and key signing</p>
             </div>
         </div>
 
@@ -59,20 +59,20 @@
                         <div class="grid grid-cols-1 md:grid-cols-1 gap-4">
                             <div>
                                 <label for="privateKeyBox" class="block text-sm font-medium mb-1">
-                                    <i class="fas fa-lock mr-1"></i> Your Private Key (PEM, editable)
+                                    <i class="fas fa-lock mr-1"></i> Your Private Key
                                 </label>
                                 <textarea id="privateKeyBox" rows="8"
                                         class="w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm text-gray-100"
-                                        placeholder="Your private key PEM goes here"></textarea>
+                                        placeholder="-----BEGIN PRIVATE KEY-----&#10;EXAMPLEKEYEXAMPLEKEYEXAMPLEKEY&#10;-----END PRIVATE KEY-----"></textarea>
                             </div>
 
                             <div>
                                 <label for="publicKeyBox" class="block text-sm font-medium mb-1">
-                                    <i class="fas fa-lock-open mr-1"></i> Your Public Key (PEM, editable)
+                                    <i class="fas fa-lock-open mr-1"></i> Your Public Key
                                 </label>
                                 <textarea id="publicKeyBox" rows="8"
                                         class="w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm text-gray-100"
-                                        placeholder="Your public key PEM goes here"></textarea>
+                                        placeholder="-----BEGIN PUBLIC KEY-----&#10;EXAMPLEKEYEXAMPLEKEYEXAMPLEKEY&#10;-----END PUBLIC KEY-----"></textarea>
                             </div>
                         </div>
                     </div>
@@ -86,15 +86,15 @@
                         </h3>
 
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                            <button id="exportKeysBtn"
-                                    class="flex items-center justify-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors">
-                                <i class="fas fa-file-export mr-2"></i>
-                                Export Keys
-                            </button>
                             <button id="importKeysBtn"
                                     class="flex items-center justify-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors">
                                 <i class="fas fa-file-import mr-2"></i>
                                 Import Keys
+                            </button>
+                            <button id="exportKeysBtn"
+                                    class="flex items-center justify-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors">
+                                <i class="fas fa-file-export mr-2"></i>
+                                Export Keys
                             </button>
                         </div>
 
@@ -114,11 +114,11 @@
 
                         <div>
                             <label for="encryptedKeysBox" class="block text-sm font-medium mb-1">
-                                <i class="fas fa-file-code mr-1"></i> Encrypted Keys (Base64 blob)
+                                <i class="fas fa-file-code mr-1"></i> Encrypted Keys
                             </label>
                             <textarea id="encryptedKeysBox" rows="14"
                                     class="w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm text-gray-100"
-                                    placeholder="Exported encrypted keys appear here or paste here to import."></textarea>
+                                    placeholder="Paste here to import"></textarea>
                         </div>
                     </div>
                 </div>
@@ -135,11 +135,11 @@
 
                     <div class="mb-4">
                         <label for="recipientPublicKeyBox" class="block text-sm font-medium mb-1">
-                            <i class="fas fa-user-friends mr-1"></i> Recipient's Public Key (PEM)
+                            <i class="fas fa-user-friends mr-1"></i> Recipient's Public Key
                         </label>
                         <textarea id="recipientPublicKeyBox" rows="6"
                                 class="w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm text-gray-100"
-                                placeholder="Paste recipient's public key PEM here."></textarea>
+                                placeholder="Paste recipient's public key here"></textarea>
                     </div>
 
                     <div class="mb-4">
@@ -148,7 +148,7 @@
                         </label>
                         <textarea id="messageBox" rows="8"
                                 class="w-full p-3 border border-gray-700 rounded-md bg-gray-900 font-mono text-sm text-gray-100"
-                                placeholder="Enter plaintext or encrypted base64 blob"></textarea>
+                                placeholder="Plaintext to encrypt or encrypted text to decrypt"></textarea>
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -192,7 +192,7 @@
         </div>
 
         <div class="mt-6 text-sm text-gray-400 text-center">
-            <i class="fas fa-shield-alt mr-1"></i> Version 1.23
+            <i class="fas fa-shield-alt mr-1"></i> Version 1.23.1
         </div>
         <div class="text-sm text-blue-400 text-center">
             <a href="https://github.com/stfu23489/rsa" target="_blank">Source code</a>
